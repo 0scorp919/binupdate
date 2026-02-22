@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-DevOps CLI Bin Manager (v1.5)
+DevOps CLI Bin Manager (v1.6)
 Author: Oleksii Rovnianskyi System
 
 UA: Менеджер DevOps CLI інструментів (apps/bin/).
-    - Перевірка поточних версій: helm, kubectl, terraform, rclone, gh, bw
+    - Перевірка поточних версій: helm, kubectl, terraform, rclone, gh, bw, sqlite3
     - Перевірка нових версій через офіційні GitHub Releases API
     - Завантаження та оновлення бінарників
-    - Ротація логів (7 днів + 10 MB; поточний день захищений)
+    - Ротація логів (7 днів + 50 MB; поточний день захищений)
     - НЕ робить бекап — CLI-інструменти без даних користувача
     - GITHUB_TOKEN з .env — знімає rate limit (60 → 5000 req/год)
     - Портативність: SCRIPT_DIR → CAPSULE_ROOT auto-detect (хардкод заборонено)
+    - sqlite3.exe — читання VS Code globalStorage (state.vscdb) для auto-config
 
 CHANGELOG:
+    v1.6 — Додано sqlite3.exe (SQLite CLI):
+           Джерело: github.com/sqlite/sqlite-amalgamation (precompiled binaries)
+           Використовується clinecli_manager.py для читання OpenRouter API ключа
+           з VS Code globalStorage/state.vscdb (Cline extension settings)
+           Додано до TOOLS: sqlite3, asset: sqlite-tools-win-x64-*.zip
     v1.5 — Підготовка до публікації на GitHub (аудит портативності):
            CAPSULE_ROOT auto-detect від SCRIPT_DIR (замінено хардкод USER_ROOT)
            cleanup_old_logs: захист поточного дня (today_str перевірка)
@@ -58,7 +64,7 @@ import re
 import zipfile
 import shutil
 
-__version__ = "1.5"
+__version__ = "1.6"
 
 
 def get_manager_hash() -> str:
@@ -150,6 +156,19 @@ TOOLS: list[dict] = [
         "asset_pattern": r"bw-windows-[\d\.]+\.zip",
         # UA: Всередині zip: bw.exe (в корені архіву)
         "binary_in_zip": "bw.exe",
+    },
+    {
+        "name":    "sqlite3",
+        "exe":     "sqlite3.exe",
+        "desc":    "SQLite CLI. Читання .vscdb баз даних VS Code (globalStorage) для auto-config.",
+        # UA: v1.6 — sqlite3 використовується clinecli_manager.py для читання
+        #     OpenRouter API ключа з state.vscdb (Cline extension settings).
+        #     Джерело: sqlite.org precompiled binaries для Windows x64.
+        "source":  "sqlite_org",
+        # UA: Пряме завантаження з sqlite.org/download.html
+        # Формат: sqlite-tools-win-x64-XXXXXXX.zip → sqlite3.exe в корені архіву
+        "asset_pattern": r"sqlite-tools-win-x64-[\d]+\.zip",
+        "binary_in_zip": None,  # UA: sqlite3.exe шукається у будь-якому місці архіву
     },
 ]
 
@@ -508,6 +527,40 @@ def get_latest_version_github_filtered(
     return None, None
 
 
+def get_latest_version_sqlite_org() -> tuple[str, str] | tuple[None, None]:
+    """
+    Get latest sqlite3 version and download URL from sqlite.org/download.html.
+    UA: Парсить sqlite.org/download.html для отримання останньої версії
+        sqlite-tools-win-x64-XXXXXXX.zip та URL завантаження.
+        Сторінка містить рядок виду: 2026/sqlite-tools-win-x64-3510200.zip
+        (не в href — href='hp1.html'; шукаємо YYYY/filename прямо в HTML).
+        Версія: числовий рядок XXXXXXX (наприклад 3510200).
+    """
+    try:
+        resp = requests.get(
+            "https://www.sqlite.org/download.html",
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+        html = resp.text
+        # UA: Шукаємо YYYY/sqlite-tools-win-x64-XXXXXXX.zip у будь-якому місці HTML
+        #     href='hp1.html' — не прямий URL; реальний шлях є в тексті сторінки
+        m = re.search(
+            r'(20\d{2})/(sqlite-tools-win-x64-([\d]+)\.zip)',
+            html
+        )
+        if m:
+            year     = m.group(1)   # e.g. "2026"
+            filename = m.group(2)   # e.g. "sqlite-tools-win-x64-3510200.zip"
+            ver_str  = m.group(3)   # e.g. "3510200"
+            download_url = f"https://www.sqlite.org/{year}/{filename}"
+            return ver_str, download_url
+    except Exception as e:
+        log(f"   ⚠️ sqlite.org помилка: {e}", Colors.YELLOW)
+    return None, None
+
+
 def get_latest_version_k8s() -> str | None:
     """
     Get latest stable kubectl version from Kubernetes CDN.
@@ -610,6 +663,13 @@ def update_tool(tool: dict) -> None:
         if not latest_ver or not latest_tag:
             log(f"   ⚠️ Не вдалося отримати версію {name}.", Colors.YELLOW)
             return
+    elif tool["source"] == "sqlite_org":
+        # UA: v1.6 — sqlite.org precompiled binaries (не GitHub)
+        latest_ver, sqlite_download_url = get_latest_version_sqlite_org()
+        if not latest_ver or not sqlite_download_url:
+            log(f"   ⚠️ Не вдалося отримати версію {name}.", Colors.YELLOW)
+            return
+        latest_tag = latest_ver  # UA: для sqlite_org tag == version number
     else:
         latest_ver, latest_tag = get_latest_version_github(tool["repo"])
         if not latest_ver or not latest_tag:
@@ -618,9 +678,18 @@ def update_tool(tool: dict) -> None:
 
     log(f"   ℹ️  Остання:     {latest_ver}", Colors.CYAN)
 
-    if current_ver != "0.0.0" and version.parse(latest_ver) <= version.parse(current_ver):
-        log(f"   ✅ {name} актуальний.", Colors.GREEN)
-        return
+    # UA: Порівняння версій: для sqlite_org використовуємо int (3490100 > 3480000)
+    if current_ver != "0.0.0":
+        try:
+            if tool["source"] == "sqlite_org":
+                up_to_date = int(latest_ver) <= int(current_ver)
+            else:
+                up_to_date = version.parse(latest_ver) <= version.parse(current_ver)
+        except Exception:
+            up_to_date = False
+        if up_to_date:
+            log(f"   ✅ {name} актуальний.", Colors.GREEN)
+            return
 
     log(f"   🚀 Оновлення {name} {current_ver} → {latest_ver}...", Colors.HEADER)
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -643,6 +712,35 @@ def update_tool(tool: dict) -> None:
                     os.remove(save_path)
                 except Exception:
                     pass
+        return
+
+    # UA: sqlite_org — пряме завантаження zip з sqlite.org (не GitHub API)
+    if tool["source"] == "sqlite_org":
+        archive_name = sqlite_download_url.split("/")[-1]
+        save_path = os.path.join(DOWNLOADS_DIR, archive_name)
+        log(f"   ⬇️  {sqlite_download_url}", Colors.BLUE)
+        try:
+            download_file(sqlite_download_url, save_path, name)
+        except Exception as e:
+            log(f"   ❌ Помилка завантаження: {e}", Colors.RED)
+            if os.path.exists(save_path):
+                try:
+                    os.remove(save_path)
+                except Exception:
+                    pass
+            return
+        log(f"   ⚙️  Розпакування {archive_name}...", Colors.BLUE)
+        success = extract_binary_from_zip(
+            save_path, tool.get("binary_in_zip"), name, BIN_DIR
+        )
+        try:
+            os.remove(save_path)
+        except Exception:
+            pass
+        if success:
+            log(f"   ✅ {name} оновлено → {latest_ver}", Colors.GREEN)
+        else:
+            log(f"   ❌ Не вдалося оновити {name}.", Colors.RED)
         return
 
     # UA: GitHub — завантажуємо zip-архів
