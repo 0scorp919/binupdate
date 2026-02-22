@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DevOps CLI Bin Manager (v1.6)
+DevOps CLI Bin Manager (v1.7)
 Author: Oleksii Rovnianskyi System
 
 UA: Менеджер DevOps CLI інструментів (apps/bin/).
@@ -14,6 +14,10 @@ UA: Менеджер DevOps CLI інструментів (apps/bin/).
     - sqlite3.exe — читання VS Code globalStorage (state.vscdb) для auto-config
 
 CHANGELOG:
+    v1.7 — ФІКС: sqlite3 порівняння версій (bug: завжди оновлювалось):
+           sqlite3 --version повертає "3.51.2" (семантична), sqlite.org дає "3510200" (числова).
+           Конвертація: X.Y.Z → X*1000000 + Y*10000 + Z*100 перед int-порівнянням.
+           Без фікса: int("3510200") <= int("3.51.2") → Exception → up_to_date=False → завжди оновлення.
     v1.6 — Додано sqlite3.exe (SQLite CLI):
            Джерело: github.com/sqlite/sqlite-amalgamation (precompiled binaries)
            Використовується clinecli_manager.py для читання OpenRouter API ключа
@@ -64,7 +68,7 @@ import re
 import zipfile
 import shutil
 
-__version__ = "1.6"
+__version__ = "1.7"
 
 
 def get_manager_hash() -> str:
@@ -678,11 +682,21 @@ def update_tool(tool: dict) -> None:
 
     log(f"   ℹ️  Остання:     {latest_ver}", Colors.CYAN)
 
-    # UA: Порівняння версій: для sqlite_org використовуємо int (3490100 > 3480000)
+    # UA: Порівняння версій: для sqlite_org конвертуємо X.Y.Z → числовий формат sqlite.org
+    #     sqlite3 --version повертає "3.51.2" (семантична), sqlite.org дає "3510200" (числова)
+    #     Формула: X*1000000 + Y*10000 + Z*100 → 3.51.2 = 3510200
     if current_ver != "0.0.0":
         try:
             if tool["source"] == "sqlite_org":
-                up_to_date = int(latest_ver) <= int(current_ver)
+                # UA: Якщо current_ver містить крапки — конвертуємо у числовий формат
+                if "." in current_ver:
+                    parts = current_ver.split(".")
+                    cur_int = (int(parts[0]) * 1_000_000
+                               + int(parts[1]) * 10_000
+                               + int(parts[2]) * 100)
+                else:
+                    cur_int = int(current_ver)
+                up_to_date = int(latest_ver) <= cur_int
             else:
                 up_to_date = version.parse(latest_ver) <= version.parse(current_ver)
         except Exception:
