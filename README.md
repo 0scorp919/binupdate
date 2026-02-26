@@ -2,7 +2,7 @@
 
 Менеджер автооновлення DevOps CLI інструментів у Autonomous Capsule.
 
-**Поточна версія:** `bin_manager.py` v2.4
+**Поточна версія:** `bin_manager.py` v2.5
 
 ## Запуск
 
@@ -59,7 +59,7 @@ CAPSULE_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 
 ```
 devops/binupdate/
-  bin_manager.py     ✅ — головний менеджер (v2.4)
+  bin_manager.py     ✅ — головний менеджер (v2.5)
   bin_launcher.bat   ✅ — портативний лаунчер (GitHub-ready, auto-detect CAPSULE_ROOT)
   .env               ❌ — конфігурація GITHUB_TOKEN (gitignored)
   .env.example       ✅ — шаблон змінних середовища
@@ -312,6 +312,7 @@ Win+R → bin
 
 ## CHANGELOG
 
+- **v2.5** — Стандартизація PATH-логіки за референсом 7zipupdate: `show_path_info()` всередині `ensure_in_system_path()`, перевірка PATH через winreg, UAC elevation для fix_path.ps1
 - **v2.4** — ФІКС: динамічний таймер автозакриття (зворотний відлік замість статичного "30 секунд")
 - **v2.3** — Аудит: приведення до manager_standard v3.1: `ENABLE_BACKUPS=False`, `show_path_info()`, ФІКС: logging.basicConfig
 - **v2.2** — ФІКС: terraform — нове джерело hc_releases замість github
