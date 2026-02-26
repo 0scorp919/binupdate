@@ -2,7 +2,7 @@
 
 Менеджер автооновлення DevOps CLI інструментів у Autonomous Capsule.
 
-**Поточна версія:** `bin_manager.py` v1.5
+**Поточна версія:** `bin_manager.py` v2.0
 
 ## Запуск
 
@@ -246,6 +246,9 @@ Win+R → bin
 
 ## CHANGELOG
 
+- **v2.0** — Повна відповідність template v3.0: додано `AutoCloseTimer`, `health_check()`, `error_reporting()`, `observability_hooks()`, `check_and_update()`. `manage_backups()` — НЕ використовується (CLI без user data). Рефакторинг коду: `_load_env()`, стандартизовані шляхи через `.env` або auto-detect.
+- **v1.7** — ФІКС: sqlite3 порівняння версій (конвертація X.Y.Z → X*1000000 + Y*10000 + Z*100)
+- **v1.6** — Додано sqlite3.exe (SQLite CLI)
 - **v1.5** — Підготовка до публікації на GitHub: `CAPSULE_ROOT` auto-detect (замінено хардкод `USER_ROOT`), `cleanup_old_logs` захист поточного дня (`today_str`), `_rotate_log_if_needed()` (>50 MB → part-файл), `bin_launcher.bat` (GitHub-ready портативний лаунчер), `.gitignore`
 - **v1.4** — Стандарт менеджера капсули: `__version__` + `get_manager_hash()`, `cleanup_old_logs(max_size_mb=10.0)`, динамічний заголовок, `_parse_env_file()` + `GITHUB_TOKEN`, `.env.example`
 - **v1.3** — Додано `bw.exe` (Bitwarden CLI): `github_filtered` source, `get_latest_version_github_filtered()`
