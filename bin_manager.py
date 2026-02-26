@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DevOps CLI Bin Manager v2.2
+DevOps CLI Bin Manager v2.5
 Author: Oleksii Rovnianskyi System
 
 UA: Менеджер DevOps CLI інструментів (apps/bin/).
@@ -12,10 +12,19 @@ UA: Менеджер DevOps CLI інструментів (apps/bin/).
     - GITHUB_TOKEN з .env — знімає rate limit (60 → 5000 req/год)
     - Портативність: SCRIPT_DIR → CAPSULE_ROOT auto-detect (хардкод заборонено)
     - sqlite3.exe — читання VS Code globalStorage (state.vscdb) для auto-config
-    - Повна відповідність template v3.0: AutoCloseTimer, health_check, error_reporting,
-      observability_hooks, check_and_update
+    - Повна відповідність template v3.1: ENABLE_BACKUPS, show_path_info, logging fix
 
 Changelog:
+  v2.5 (2026-02-26) — СТАНДАРТ: приведено ensure_in_system_path() до референсу 7zipupdate:
+         - show_path_info() тепер викликається всередині ensure_in_system_path()
+         - Перевірка PATH через winreg (реєстр) замість `where helm`
+         - UAC elevation для fix_path.ps1 через Start-Process -Verb RunAs
+         - Порядок main(): PATH → logs → update (як у стандарті)
+  v2.4 (2026-02-26) — ФІКС: динамічний таймер автозакриття (зворотний відлік замість статичного "30 секунд")
+  v2.3 (2026-02-26) — Аудит: приведення до manager_standard v3.1:
+         Додано: ENABLE_BACKUPS=False, manage_backups() (пропуск), show_path_info()
+         ФІКС: logging.basicConfig — прибрано StreamHandler (тільки файл)
+         Оновлено: __version__ → v2.3
   v2.2 — ФІКС: terraform — новий джерело hc_releases замість github:
          Тепер використовує https://releases.hashicorp.com замість GitHub API
          (HashiCorp більше не публікує архіви на GitHub)
@@ -58,7 +67,7 @@ from typing import Optional
 # ===========================================================================
 # VERSION
 # ===========================================================================
-__version__ = "2.2"
+__version__ = "2.5"
 
 def get_manager_hash() -> str:
     """Return first 12 chars of SHA256 of this script (self-integrity check).
@@ -110,6 +119,9 @@ PWSH_EXE   = _env.get("PWSH_EXE")   or os.path.join(CAPSULE_ROOT, "apps",    "pw
 
 # GitHub token
 GITHUB_TOKEN: str | None = _env.get("GITHUB_TOKEN") or None
+
+# Чи потрібні бекапи? CLI-інструменти без даних користувача — вимкнено
+ENABLE_BACKUPS: bool = False
 
 START_TIME = time.time()
 os.system('')  # enable ANSI colors in Windows CMD
@@ -342,7 +354,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler(_log_path, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
     ]
 )
 
@@ -425,6 +436,73 @@ def cleanup_old_logs(max_days: int = 7, max_size_mb: float = 50.0) -> None:
 
 
 # ===========================================================================
+# BACKUP MANAGEMENT (CLI — skip)
+# ===========================================================================
+def manage_backups(backup_source: str = None) -> bool:
+    """Create AES-256 encrypted backup with rotation (7 daily + 4 weekly).
+    UA: Створення зашифрованої резервної копії з ротацією.
+
+    Для CLI-інструментів без даних користувача — пропускається.
+    """
+    if not ENABLE_BACKUPS:
+        log("ℹ️ Бекапи вимкнено (ENABLE_BACKUPS=False). Пропускаю.", Colors.CYAN)
+        return True
+    log("⚠️ Бекапи увімкнено, але CLI-інструменти не потребують бекапу.", Colors.YELLOW)
+    return True
+
+
+# ===========================================================================
+# SHOW PATH INFO
+# ===========================================================================
+def show_path_info() -> None:
+    """Show information about what is registered in PATH for this app.
+    UA: Показує інформацію про те, що зареєстровано в PATH для застосунку."""
+    cprint("-" * 50, Colors.BLUE)
+    log("🔧 ІНФОРМАЦІЯ ПРО PATH", Colors.HEADER)
+
+    tags_dir = os.path.join(CAPSULE_ROOT, "tags")
+    bin_dir = BIN_DIR.rstrip('\\')
+
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            0, winreg.KEY_READ
+        )
+        current_path, _ = winreg.QueryValueEx(key, "Path")
+        winreg.CloseKey(key)
+        entries = [e.rstrip('\\').strip().lower() for e in current_path.split(';') if e.strip()]
+    except Exception:
+        entries = []
+
+    tags_norm = tags_dir.rstrip('\\').lower()
+    tags_in_path = tags_norm in entries
+    bin_norm = bin_dir.lower()
+    bin_in_path = bin_norm in entries
+
+    log("", Colors.RESET)
+    log("   📋 РЕЄСТРАЦІЯ В PATH:", Colors.CYAN)
+    log("", Colors.RESET)
+
+    if tags_in_path:
+        log(f"   ✅ tags/         → Win+R → bin (ярлик менеджера)", Colors.GREEN)
+    else:
+        log(f"   ❌ tags/         → Win+R → bin (ярлик менеджера) — НЕ зареєстровано", Colors.RED)
+
+    if bin_in_path:
+        log(f"   ✅ apps/bin/     → helm, kubectl, terraform... (CLI інструменти)", Colors.GREEN)
+    else:
+        log(f"   ❌ apps/bin/     → helm, kubectl, terraform... — НЕ зареєстровано", Colors.RED)
+
+    log("", Colors.RESET)
+    log("   💡 ПРИМІТКА:", Colors.YELLOW)
+    log("      Win+R → bin  → запускає менеджер (tags/bin.lnk)", Colors.CYAN)
+    log("      Win+R → helm → helm.exe (з apps/bin/)", Colors.CYAN)
+    log("", Colors.RESET)
+
+
+# ===========================================================================
 # VERSION CHECK AND UPDATE
 # ===========================================================================
 def check_and_update(current_version: str = None) -> dict:
@@ -447,50 +525,55 @@ def check_and_update(current_version: str = None) -> dict:
 # ===========================================================================
 # ENSURE IN SYSTEM PATH (UAC-aware)
 # ===========================================================================
-def ensure_in_system_path() -> bool:
-    """Register capsule's portable tools in system PATH (UAC-aware).
-    UA: Реєстрація портативних інструментів у системному PATH."""
-    # Check if already in PATH
+def ensure_in_system_path() -> None:
+    """
+    Ensure apps/bin/ is in system PATH (HKLM), remove duplicates.
+    UA: Перевіряє що apps/bin/ є в системному PATH (HKLM).
+        Якщо відсутній — додає через PowerShell з UAC elevation.
+        Також прибирає дублікати та обрізані записи.
+        Потрібно для роботи `helm`, `kubectl` та інших CLI з будь-якого місця в системі.
+    """
+    # UA: Спочатку показуємо інформацію про поточний стан PATH
+    show_path_info()
+
+    ps_script = os.path.join(CAPSULE_ROOT, "devops", "pathupdate", "fix_path.ps1")
+    if not os.path.exists(ps_script):
+        log("   ⚠️ fix_path.ps1 не знайдено, пропускаємо.", Colors.YELLOW)
+        return
+
+    # UA: Перевіряємо поточний PATH через реєстр
     try:
-        result = subprocess.run(
-            ["where", "helm"],
-            capture_output=True, text=True, shell=True
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            0, winreg.KEY_READ
         )
-        if result.returncode == 0:
-            log("   ✅ Capsule PATH вже зареєстровано в системі.", Colors.GREEN)
-            return True
+        current_path, _ = winreg.QueryValueEx(key, "Path")
+        winreg.CloseKey(key)
+        entries = [e.rstrip('\\').strip() for e in current_path.split(';') if e.strip()]
+        bin_norm = BIN_DIR.rstrip('\\')
+        if bin_norm in entries:
+            # log(f"   ✅ apps/bin/ вже в системному PATH.", Colors.GREEN)
+            return
     except Exception:
-        pass
+        pass  # UA: winreg недоступний або помилка читання — продовжуємо
 
-    # Use fix_path.ps1 for UAC-aware PATH modification
-    fix_path_script = os.path.join(CAPSULE_ROOT, "devops", "pathupdate", "fix_path.ps1")
-
-    if not os.path.exists(fix_path_script):
-        log(f"⚠️ fix_path.ps1 не знайдено: {fix_path_script}", Colors.YELLOW)
-        return False
-
-    tool_path = BIN_DIR
+    # UA: apps/bin/ відсутній — запускаємо fix_path.ps1 з UAC
+    log(f"   ℹ️  apps/bin/ відсутній в PATH. Запускаю реєстрацію (UAC)...", Colors.YELLOW)
+    pwsh = PWSH_EXE if os.path.exists(PWSH_EXE) else "pwsh"
 
     try:
-        log(f"Додаю {tool_path} до PATH...", Colors.CYAN)
-        result = subprocess.run(
-            [
-                "powershell", "-ExecutionPolicy", "Bypass", "-File", fix_path_script,
-                "-PathToAdd", tool_path
-            ],
-            capture_output=True, text=True, timeout=30
+        subprocess.run(
+            [pwsh, "-NoProfile", "-Command",
+             f"Start-Process '{pwsh}' -Verb RunAs -Wait "
+             f"-ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"{ps_script}\" -AutoClose'"],
+            timeout=60
         )
-
-        if result.returncode == 0:
-            log(f"   ✓ {tool_path} додано до PATH", Colors.GREEN)
-            return True
-        else:
-            log(f"   ⚠️ Не вдалося додати до PATH: {result.stderr}", Colors.YELLOW)
-            return False
-
+        log("   ✅ PATH оновлено. Перезапусти термінал для застосування.", Colors.GREEN)
     except Exception as e:
-        log(f"   ⚠️ Помилка: {e}", Colors.YELLOW)
-        return False
+        log(f"   ⚠️ Не вдалося оновити PATH: {e}", Colors.YELLOW)
+        log(f"   ℹ️  Запусти вручну: {ps_script}", Colors.CYAN)
 
 
 # ===========================================================================
@@ -1028,6 +1111,9 @@ def main() -> int:
     _auto_close.start()
 
     try:
+        # UA: Крок 1 — перевірка PATH (до будь-яких мережевих операцій)
+        ensure_in_system_path()
+
         # Health check
         checks = health_check()
         if not all(checks.values()):
@@ -1037,19 +1123,17 @@ def main() -> int:
         hooks = observability_hooks()
         log(f"   ℹ️  Observability: {hooks['tracing']['service_name']}", Colors.CYAN)
 
-        # Cleanup old logs
+        # UA: Крок 2 — ротація логів (7 днів; >50 MB → part-файл)
         cleanup_old_logs(max_days=7, max_size_mb=10.0)
 
-        # Update each tool
+        # UA: Крок 3 — перевірка та оновлення інструментів
         for tool in TOOLS:
             update_tool(tool)
 
-        # Ensure in PATH
-        ensure_in_system_path()
-
         log("Готово!", Colors.GREEN)
 
-        # UA: Автозакриття через 30 секунд (як в 7zip_manager.py)
+        # Auto-close after completion — динамічний зворотний відлік
+        _auto_close.stop()
         for i in range(30, 0, -1):
             sys.stdout.write(f"\r{Colors.CYAN}Автозакриття через {i} с... {Colors.RESET}")
             sys.stdout.flush()
@@ -1065,7 +1149,6 @@ def main() -> int:
         error_reporting(e, "main")
         return 1
     finally:
-        _auto_close.stop()
         elapsed = time.time() - START_TIME
         cprint(f"⏱️  Час виконання: {elapsed:.1f} сек", Colors.BLUE)
 
