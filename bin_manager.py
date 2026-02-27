@@ -369,14 +369,14 @@ def log(msg: str, color: str = Colors.RESET, console: bool = True) -> None:
 # LOG ROTATION (cleanup old files)
 # ===========================================================================
 def cleanup_old_logs(max_days: int = 7, max_size_mb: float = 50.0) -> None:
-    """Delete log files older than N days. Compress rotated parts to .gz.
-    UA: Видаляє лог-файли старші за N днів. Стискає ротовані частини в .gz.
+    """Delete log files older than N days.
+    UA: Видаляє лог-файли старші за N днів.
     Поточний день НЕ видаляється."""
     log("🧹 Перевірка старих логів...", Colors.CYAN)
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     deleted = 0
 
-    # Part files older than 7 days → compress to .gz
+    # Delete part files older than 7 days
     for f in glob.glob(os.path.join(LOG_DIR, f"{APP_NAME}_log_*_part*.log")):
         fname = os.path.basename(f)
         match = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
@@ -385,26 +385,6 @@ def cleanup_old_logs(max_days: int = 7, max_size_mb: float = 50.0) -> None:
         file_date = match.group(1)
         if file_date == today_str:
             continue
-
-        gz_file = f + ".gz"
-        if not os.path.exists(gz_file):
-            try:
-                import gzip
-                with open(f, 'rb') as f_in:
-                    with gzip.open(gz_file, 'wb') as f_out:
-                        f_out.writelines(f_in)
-                os.remove(f)
-                log(f"   ✓ Стиснуто: {fname} → {fname}.gz", Colors.CYAN)
-            except Exception as e:
-                log(f"   ⚠️ Помилка стискання {fname}: {e}", Colors.YELLOW)
-
-    # Delete .gz files older than 7 days
-    for f in glob.glob(os.path.join(LOG_DIR, f"{APP_NAME}_log_*.log.gz")):
-        fname = os.path.basename(f)
-        match = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
-        if not match:
-            continue
-        file_date = match.group(1)
 
         try:
             file_date_obj = datetime.datetime.strptime(file_date, "%Y-%m-%d").date()
@@ -415,9 +395,11 @@ def cleanup_old_logs(max_days: int = 7, max_size_mb: float = 50.0) -> None:
         except ValueError:
             continue
 
-    # Delete old part files (not compressed)
-    for f in glob.glob(os.path.join(LOG_DIR, f"{APP_NAME}_log_*_part*.log")):
+    # Delete old log files (not part files)
+    for f in glob.glob(os.path.join(LOG_DIR, f"{APP_NAME}_log_*.log")):
         fname = os.path.basename(f)
+        if "_part" in fname:
+            continue  # already handled above
         match = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
         if not match:
             continue
